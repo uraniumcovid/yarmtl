@@ -25,3 +25,4 @@
 - [ ] Demo deadline #test //Testing natural deadline
 - [ ] Demo deadline 2 !2025-09-30 #test @2025-09-29
 - [ ] Test git integration #git //First auto-committed task
+- [ ] Another test task #git //Testing git commits
