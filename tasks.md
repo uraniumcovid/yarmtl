@@ -29,3 +29,4 @@
 - [ ] Perfect display #order //This comment comes at the end
 - [ ] Test task !2025-09-30 #test //Comment first then deadline !tomorrow #test
 - [ ] Fixed parsing !2025-09-30 #test @2025-09-29 //Comment before deadline
+- [ ] Another test !2025-09-29 #parsing //Works anywhere in the task
