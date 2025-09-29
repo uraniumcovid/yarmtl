@@ -1,0 +1,18 @@
+[package]
+name = "yarmtl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+comrak ="0.21"
+chrono = { version = "0.4", features = ["serde"] }
+ratatui = "0.26"
+crossterm = "0.29.0"
+chrono-english = "0.1.8"
+clap = { version = "4.5.48", features = ["derive"] }
+regex = "1.10"
+lettre = "0.11"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+tokio-cron-scheduler = "0.13"

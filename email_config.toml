@@ -1,0 +1,6 @@
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+username = "your_email@gmail.com"
+password = "your_app_password"
+from_email = "your_email@gmail.com"
+to_email = "your_email@gmail.com"
