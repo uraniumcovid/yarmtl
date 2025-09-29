@@ -2,20 +2,9 @@
 
 ![logo](crab.png)
 
-A powerful, markdown-based task manager with deadline tracking, email reminders, and smart natural language parsing. YARMTL stores your tasks in plain markdown files while providing a rich CLI interface with visual deadline indicators.
+simple tui todo-app with deadlines storing the task list in a markdown document.
 
 ## ✨ Features
-
-- **📝 Markdown-based storage** - Tasks stored in human-readable `tasks.md` files
-- **📅 Smart deadline tracking** - Visual indicators for overdue, due today, and future deadlines
-- **🔔 Flexible reminders** - Support for `@today`, `@tomorrow`, or specific dates
-- **🏷️ Multiple tags** - Organize tasks with multiple hashtags (`#work #urgent #frontend`)
-- **📧 Email notifications** - Automated daily reminders for due/overdue tasks
-- **🤖 Daemon mode** - Run as background service for automatic notifications
-- **🎨 Rich CLI interface** - Color-coded task display with emoji indicators
-- **🔧 Automatic git versioning** - Every task change is automatically committed to git
-
-## 🚀 Quick Start
 
 ### Installation
 
@@ -270,26 +259,11 @@ yarmtl --daemon
 
 ### Future Features
 
-- [ ] TUI interface for interactive task management
-- [ ] Task completion marking from CLI
-- [ ] Git integration for task history
+- [x] TUI interface for interactive task management
+- [x] Task completion marking from CLI
+- [x] Git integration for task history
 - [ ] Natural language date parsing
 - [ ] Task priority levels
 - [ ] Recurring task support
 - [ ] Export to other formats
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is open source. See LICENSE file for details.
-
----
-
-*YARMTL - Because sometimes you need yet another way to manage your tasks! 🦀*
