@@ -109,7 +109,7 @@ impl App {
         self.tasks.clear();
         for line in content.lines() {
             // Count leading spaces to determine indentation level
-            let indent_level = line.chars().take_while(|&c| c == ' ').count() / 2;
+            let _indent_level = line.chars().take_while(|&c| c == ' ').count() / 2;
             let trimmed_line = line.trim_start();
             
             if trimmed_line.starts_with("- [ ]") || trimmed_line.starts_with("- [x]") {
@@ -120,7 +120,7 @@ impl App {
                     trimmed_line.strip_prefix("- [ ] ").unwrap_or(trimmed_line)
                 };
                 
-                let mut task = Task::parse_with_indent(task_text, indent_level);
+                let mut task = Task::parse(task_text);
                 task.completed = completed;
                 self.tasks.push(task);
             }
@@ -632,7 +632,7 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                 let mut spans = Vec::new();
                 
                 // Indentation for subtasks
-                let indent = "  ".repeat(task.indent_level);
+                let indent = "";
                 if !indent.is_empty() {
                     spans.push(Span::styled(indent, Style::default()));
                 }
@@ -648,7 +648,7 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                     }
                 ));
 
-                // Task text
+                // Task text with ID
                 let text_style = if task.completed {
                     Style::default()
                         .fg(Color::DarkGray)
@@ -656,7 +656,11 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                spans.push(Span::styled(task.text.clone(), text_style));
+                let id_display = if task.id.len() > 8 { &task.id[..8] } else { &task.id };
+                spans.push(Span::styled(
+                    format!("{} [{}]", task.text, id_display), 
+                    text_style
+                ));
 
                 // Deadline indicator
                 if let Some(deadline) = task.deadline {
@@ -696,6 +700,22 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                     spans.push(Span::styled(
                         format!(" //{}", notes),
                         Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                    ));
+                }
+
+                // Importance
+                if let Some(importance) = task.importance {
+                    let (color, style) = match importance {
+                        1 => (Color::Red, Modifier::BOLD),      // Very important
+                        2 => (Color::LightRed, Modifier::empty()), // High importance
+                        3 => (Color::Yellow, Modifier::empty()),   // Medium importance
+                        4 => (Color::LightBlue, Modifier::empty()), // Low importance
+                        5 => (Color::DarkGray, Modifier::empty()),  // Not important
+                        _ => (Color::White, Modifier::empty()),
+                    };
+                    spans.push(Span::styled(
+                        format!(" ⭐${}", importance),
+                        Style::default().fg(color).add_modifier(style)
                     ));
                 }
 
@@ -953,11 +973,11 @@ fn draw_help_popup(f: &mut Frame) {
         Line::from("  @2025-10-01    - Set reminder for date"),
         Line::from("  #work #urgent  - Add multiple tags"),
         Line::from("  //note text    - Add task notes"),
-        Line::from("  Leading spaces - Create subtasks"),
+        Line::from("  $1             - Set importance (1=very important, 5=not important)"),
         Line::from(""),
         Line::from("Examples:"),
-        Line::from("  \"Finish report !2025-10-01 @today #work #urgent //Important meeting\""),
-        Line::from("  \"<- Review section A //Check formatting\" (subtask to last task)"),
+        Line::from("  \"Finish report !2025-10-01 @today #work #urgent $1 //Important meeting\""),
+        Line::from("  \"Review docs #work $3 //Check formatting\""),
         Line::from(""),
         Line::from("Other:"),
         Line::from("  h/F1   - Toggle this help"),
