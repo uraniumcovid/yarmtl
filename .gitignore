@@ -5,3 +5,6 @@
 # Added by cargo
 
 /target
+
+# the produced tasks list:
+tasks.md

@@ -32,12 +32,21 @@ pub struct App {
     pub show_notes: bool,
     pub selected_task_for_notes: Option<usize>,
     pub working_dir: PathBuf,
+    pub view_mode: ViewMode,
+    pub tags_list_state: ListState,
+    pub selected_tag: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
 pub enum InputMode {
     Normal,
     Editing,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum ViewMode {
+    Tasks,
+    TagsMenu,
 }
 
 impl Default for App {
@@ -54,6 +63,9 @@ impl Default for App {
             show_notes: false,
             selected_task_for_notes: None,
             working_dir: std::env::current_dir().unwrap(),
+            view_mode: ViewMode::Tasks,
+            tags_list_state: ListState::default(),
+            selected_tag: None,
         }
     }
 }
@@ -311,6 +323,93 @@ impl App {
             }
         }
     }
+
+    pub fn get_all_tags(&self) -> Vec<String> {
+        let mut tags = std::collections::HashSet::new();
+        for task in &self.tasks {
+            for tag in &task.tags {
+                tags.insert(tag.clone());
+            }
+        }
+        let mut sorted_tags: Vec<String> = tags.into_iter().collect();
+        sorted_tags.sort();
+        sorted_tags
+    }
+
+    pub fn get_tasks_by_tag(&self, tag: &str) -> Vec<usize> {
+        self.tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, task)| {
+                task.tags.contains(&tag.to_string()) && (self.show_completed || !task.completed)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn toggle_view_mode(&mut self) {
+        match self.view_mode {
+            ViewMode::Tasks => {
+                self.view_mode = ViewMode::TagsMenu;
+                let tags = self.get_all_tags();
+                if !tags.is_empty() {
+                    self.tags_list_state.select(Some(0));
+                }
+            }
+            ViewMode::TagsMenu => {
+                self.view_mode = ViewMode::Tasks;
+                self.selected_tag = None;
+            }
+        }
+    }
+
+    pub fn next_tag(&mut self) {
+        let tags = self.get_all_tags();
+        let total_items = tags.len() + 1; // +1 for "All Tasks" option
+        
+        let i = match self.tags_list_state.selected() {
+            Some(i) => {
+                if i >= total_items - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.tags_list_state.select(Some(i));
+    }
+
+    pub fn previous_tag(&mut self) {
+        let tags = self.get_all_tags();
+        let total_items = tags.len() + 1; // +1 for "All Tasks" option
+        
+        let i = match self.tags_list_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    total_items - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.tags_list_state.select(Some(i));
+    }
+
+    pub fn select_tag(&mut self) {
+        let tags = self.get_all_tags();
+        if let Some(selected) = self.tags_list_state.selected() {
+            if selected == 0 {
+                // "All Tasks" option selected
+                self.selected_tag = None;
+            } else if let Some(tag) = tags.get(selected - 1) {
+                // Adjust index by -1 since "All Tasks" is at index 0
+                self.selected_tag = Some(tag.clone());
+            }
+            self.view_mode = ViewMode::Tasks;
+        }
+    }
 }
 
 pub fn run_tui(working_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -366,41 +465,68 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 }
 
                 match app.input_mode {
-                    InputMode::Normal => match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('a') | KeyCode::Char('i') => {
-                            app.input_mode = InputMode::Editing;
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            app.next_task();
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            app.previous_task();
-                        }
-                        KeyCode::Char(' ') | KeyCode::Enter => {
-                            app.toggle_completed();
-                        }
-                        KeyCode::Char('d') | KeyCode::Delete => {
-                            app.delete_selected_task();
-                        }
-                        KeyCode::Char('c') => {
-                            app.show_completed = !app.show_completed;
-                        }
-                        KeyCode::Char('h') | KeyCode::F(1) => {
-                            app.show_help = !app.show_help;
-                        }
-                        KeyCode::Char('r') => {
-                            app.load_tasks();
-                        }
-                        KeyCode::Char('n') => {
-                            if let Some(selected) = app.list_state.selected() {
-                                if let Some(task_index) = app.get_task_index_from_display_position(selected) {
-                                    app.selected_task_for_notes = Some(task_index);
-                                    app.show_notes = true;
+                    InputMode::Normal => match app.view_mode {
+                        ViewMode::Tasks => match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('a') | KeyCode::Char('i') => {
+                                app.input_mode = InputMode::Editing;
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                app.next_task();
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                app.previous_task();
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                app.toggle_completed();
+                            }
+                            KeyCode::Char('d') | KeyCode::Delete => {
+                                app.delete_selected_task();
+                            }
+                            KeyCode::Char('c') => {
+                                app.show_completed = !app.show_completed;
+                            }
+                            KeyCode::Char('h') | KeyCode::F(1) => {
+                                app.show_help = !app.show_help;
+                            }
+                            KeyCode::Char('r') => {
+                                app.load_tasks();
+                            }
+                            KeyCode::Char('n') => {
+                                if let Some(selected) = app.list_state.selected() {
+                                    if let Some(task_index) = app.get_task_index_from_display_position(selected) {
+                                        app.selected_task_for_notes = Some(task_index);
+                                        app.show_notes = true;
+                                    }
                                 }
                             }
+                            KeyCode::Char('t') => {
+                                app.toggle_view_mode();
+                            }
+                            KeyCode::Esc => {
+                                app.selected_tag = None;
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                        ViewMode::TagsMenu => match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                app.next_tag();
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                app.previous_tag();
+                            }
+                            KeyCode::Enter => {
+                                app.select_tag();
+                            }
+                            KeyCode::Char('t') | KeyCode::Esc => {
+                                app.toggle_view_mode();
+                            }
+                            KeyCode::Char('h') | KeyCode::F(1) => {
+                                app.show_help = !app.show_help;
+                            }
+                            _ => {}
+                        }
                     }
                     InputMode::Editing => match key.code {
                         KeyCode::Enter => {
@@ -444,22 +570,49 @@ fn ui(f: &mut Frame, app: &mut App) {
     }
 
     // Main layout
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),    // Task list
-            Constraint::Length(3), // Input
-            Constraint::Length(1), // Status line
-        ])
-        .split(f.size());
+    match app.view_mode {
+        ViewMode::Tasks => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(3),    // Task list
+                    Constraint::Length(3), // Input
+                    Constraint::Length(1), // Status line
+                ])
+                .split(f.size());
 
-    draw_task_list(f, app, chunks[0]);
-    draw_input(f, app, chunks[1]);
-    draw_status_line(f, app, chunks[2]);
+            draw_task_list(f, app, chunks[0]);
+            draw_input(f, app, chunks[1]);
+            draw_status_line(f, app, chunks[2]);
+        }
+        ViewMode::TagsMenu => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(3),    // Tags list
+                    Constraint::Length(1), // Status line
+                ])
+                .split(f.size());
+
+            draw_tags_menu(f, app, chunks[0]);
+            draw_status_line(f, app, chunks[1]);
+        }
+    }
 }
 
 fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    let grouped_tasks = app.get_grouped_tasks();
+    let grouped_tasks = if let Some(tag) = &app.selected_tag {
+        // Show tasks filtered by tag
+        let task_indices = app.get_tasks_by_tag(tag);
+        if task_indices.is_empty() {
+            vec![]
+        } else {
+            vec![(format!("TAG: #{}", tag), task_indices)]
+        }
+    } else {
+        app.get_grouped_tasks()
+    };
+    
     let mut items: Vec<ListItem> = Vec::new();
     
     // Add section headers and tasks
@@ -554,10 +707,16 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         }
     }
 
-    let title = if app.show_completed {
-        "Tasks (All)"
+    let title = if let Some(tag) = &app.selected_tag {
+        if app.show_completed {
+            format!("Tasks: #{} (All)", tag)
+        } else {
+            format!("Tasks: #{} (Active)", tag)
+        }
+    } else if app.show_completed {
+        "Tasks (All)".to_string()
     } else {
-        "Tasks (Active)"
+        "Tasks (Active)".to_string()
     };
 
     let tasks_list = List::new(items)
@@ -569,6 +728,42 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         .highlight_symbol("► ");
 
     f.render_stateful_widget(tasks_list, area, &mut app.list_state);
+}
+
+fn draw_tags_menu(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    let tags = app.get_all_tags();
+    let mut items: Vec<ListItem> = Vec::new();
+
+    // Add "All Tasks" option
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("📋 All Tasks", Style::default().fg(Color::White))
+    ])));
+
+    // Add individual tags
+    for tag in &tags {
+        let task_count = app.get_tasks_by_tag(tag).len();
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("🏷️  #", Style::default().fg(Color::Green)),
+            Span::styled(tag, Style::default().fg(Color::Green)),
+            Span::styled(format!(" ({})", task_count), Style::default().fg(Color::DarkGray)),
+        ])));
+    }
+
+    if tags.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("No tags found", Style::default().fg(Color::DarkGray))
+        ])));
+    }
+
+    let tags_list = List::new(items)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title("Tags Menu")
+            .border_style(Style::default().fg(Color::Green)))
+        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta))
+        .highlight_symbol("► ");
+
+    f.render_stateful_widget(tags_list, area, &mut app.tags_list_state);
 }
 
 fn draw_input(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -603,9 +798,20 @@ fn draw_status_line(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         InputMode::Editing => "EDITING",
     };
 
+    let view_info = match app.view_mode {
+        ViewMode::Tasks => {
+            if let Some(tag) = &app.selected_tag {
+                format!("Filtered by #{}", tag)
+            } else {
+                "All tasks".to_string()
+            }
+        }
+        ViewMode::TagsMenu => "Tags menu".to_string(),
+    };
+
     let status_text = format!(
-        "{} | Tasks: {} active, {} completed, {} total | h:help q:quit",
-        mode_text, visible_count, completed_count, total_count
+        "{} | {} | Tasks: {} active, {} completed, {} total | t:tags h:help q:quit",
+        mode_text, view_info, visible_count, completed_count, total_count
     );
 
     let status = Paragraph::new(status_text)
@@ -737,6 +943,8 @@ fn draw_help_popup(f: &mut Frame) {
         Line::from("  c      - Toggle show completed tasks"),
         Line::from("  r      - Reload tasks from file"),
         Line::from("  n      - View task notes"),
+        Line::from("  t      - Toggle tags menu"),
+        Line::from("  Esc    - Clear tag filter"),
         Line::from(""),
         Line::from("Task Syntax:"),
         Line::from("  !2025-10-01    - Set deadline"),
@@ -747,8 +955,9 @@ fn draw_help_popup(f: &mut Frame) {
         Line::from("  //note text    - Add task notes"),
         Line::from("  Leading spaces - Create subtasks"),
         Line::from(""),
-        Line::from("Example: \"Finish report !2025-10-01 @today #work #urgent //Important meeting\""),
-        Line::from("Subtask: \"  Review section A //Check formatting\""),
+        Line::from("Examples:"),
+        Line::from("  \"Finish report !2025-10-01 @today #work #urgent //Important meeting\""),
+        Line::from("  \"<- Review section A //Check formatting\" (subtask to last task)"),
         Line::from(""),
         Line::from("Other:"),
         Line::from("  h/F1   - Toggle this help"),

@@ -16,6 +16,7 @@ use lettre::{Message, SmtpTransport, Transport};
 use lettre::transport::smtp::authentication::Credentials;
 use tokio_cron_scheduler::{JobScheduler, Job};
 use std::sync::OnceLock;
+use uuid::Uuid;
 
 // Global state for working directory
 static WORKING_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -168,28 +169,81 @@ pub fn add_task(text: &str) {
     let mut content = fs::read_to_string(&task_file)
         .expect("couldn't read tasks file");
     
-    let task = Task::parse(text);
-    let new_task = format!("{}\n", task.to_markdown());
-    content.push_str(&new_task);
+    // Check if this is a subtask using the "<-" syntax
+    if text.trim_start().starts_with("<-") {
+        let subtask_text = text.trim_start().strip_prefix("<-").unwrap().trim();
+        add_subtask_to_last_task(&mut content, subtask_text);
+    } else {
+        let task = Task::parse(text);
+        let new_task = format!("{}\n", task.to_markdown());
+        content.push_str(&new_task);
+    }
     
     fs::write(&task_file, content)
         .expect("couldn't write tasks file");
     
     // Auto-commit the task addition with descriptive message
-    let commit_message = format!("➕ Added task: \"{}\"", task.text);
+    let commit_message = if text.trim_start().starts_with("<-") {
+        format!("➕ Added subtask: \"{}\"", text.trim_start().strip_prefix("<-").unwrap().trim())
+    } else {
+        let task = Task::parse(text);
+        format!("➕ Added task: \"{}\"", task.text)
+    };
+    
     if let Err(e) = git_commit_tasks_with_message(Some(&commit_message)) {
         eprintln!("Warning: Failed to commit task to git: {}", e);
     }
     
-    println!("✓ added task: \"{}\"", task.text);
-    if let Some(deadline) = task.deadline {
-        println!("  📅 deadline: {}", deadline.format("%Y-%m-%d"));
+    if text.trim_start().starts_with("<-") {
+        let subtask_text = text.trim_start().strip_prefix("<-").unwrap().trim();
+        println!("✓ added subtask: \"{}\"", subtask_text);
+    } else {
+        let task = Task::parse(text);
+        println!("✓ added task: \"{}\"", task.text);
+        if let Some(deadline) = task.deadline {
+            println!("  📅 deadline: {}", deadline.format("%Y-%m-%d"));
+        }
+        if !task.tags.is_empty() {
+            println!("  🏷️  tags: {}", task.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "));
+        }
+        if let Some(reminder) = task.reminder {
+            println!("  🔔 reminder: {}", reminder.format("%Y-%m-%d"));
+        }
     }
-    if !task.tags.is_empty() {
-        println!("  🏷️  tags: {}", task.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "));
+}
+
+fn add_subtask_to_last_task(content: &mut String, subtask_text: &str) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut last_task_line_index = None;
+    let mut last_task_id = None;
+    
+    // Find the last task line and extract its ID
+    for (i, line) in lines.iter().enumerate().rev() {
+        if line.trim().starts_with("- [ ]") || line.trim().starts_with("- [x]") {
+            last_task_line_index = Some(i);
+            // Extract ID from the last task
+            let id_re = Regex::new(r"\[id:([a-f0-9-]+)\]").unwrap();
+            if let Some(captures) = id_re.captures(line) {
+                last_task_id = Some(captures[1].to_string());
+            }
+            break;
+        }
     }
-    if let Some(reminder) = task.reminder {
-        println!("  🔔 reminder: {}", reminder.format("%Y-%m-%d"));
+    
+    if let (Some(line_index), Some(parent_id)) = (last_task_line_index, last_task_id) {
+        // Create the subtask with parent ID and indent
+        let subtask = Task::parse_with_parent(subtask_text, Some(parent_id));
+        let subtask_markdown = format!("  {}", subtask.to_markdown());
+        
+        // Insert the subtask after the parent task
+        let mut new_lines = lines[..=line_index].to_vec();
+        new_lines.push(&subtask_markdown);
+        new_lines.extend_from_slice(&lines[line_index + 1..]);
+        
+        *content = new_lines.join("\n");
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
     }
 }
 
@@ -207,11 +261,14 @@ pub fn list_tasks(show_completed: bool) {
     println!("tasks:");
     
     for line in content.lines() {
-        if line.starts_with("- [ ]") {
-            let task_text = line.strip_prefix("- [ ] ").unwrap_or(line);
+        let trimmed_line = line.trim_start();
+        if trimmed_line.starts_with("- [ ]") {
+            let indent_level = (line.len() - line.trim_start().len()) / 2;
+            let task_text = trimmed_line.strip_prefix("- [ ] ").unwrap_or(trimmed_line);
             let task = Task::parse(task_text);
             
-            print!("  ☐ {}", task.text);
+            let indent_prefix = "  ".repeat(indent_level + 1); // +1 for base indentation
+            print!("{}☐ {}", indent_prefix, task.text);
             if let Some(deadline) = task.deadline {
                 let today = chrono::Local::now().date_naive();
                 if deadline < today {
@@ -235,11 +292,13 @@ pub fn list_tasks(show_completed: bool) {
                 print!(" //{}", notes);
             }
             println!();
-        } else if line.starts_with("- [x]") && show_completed {
-            let task_text = line.strip_prefix("- [x] ").unwrap_or(line);
+        } else if trimmed_line.starts_with("- [x]") && show_completed {
+            let indent_level = (line.len() - line.trim_start().len()) / 2;
+            let task_text = trimmed_line.strip_prefix("- [x] ").unwrap_or(trimmed_line);
             let task = Task::parse(task_text);
             
-            print!("  ☑ {}", task.text);
+            let indent_prefix = "  ".repeat(indent_level + 1); // +1 for base indentation
+            print!("{}☑ {}", indent_prefix, task.text);
             if let Some(deadline) = task.deadline {
                 print!(" 📅 !{}", deadline.format("%Y-%m-%d"));
             }
@@ -262,6 +321,7 @@ pub fn list_tasks(show_completed: bool) {
 
 #[derive(Debug, Clone)]
 pub struct Task {
+    pub id: String,
     pub text: String,
     pub deadline: Option<NaiveDate>,
     pub tags: Vec<String>,
@@ -270,6 +330,7 @@ pub struct Task {
     pub notes: Option<String>,
     pub subtasks: Vec<Task>,
     pub indent_level: usize,
+    pub parent_id: Option<String>,
 }
 
 impl Task {
@@ -277,16 +338,30 @@ impl Task {
         Self::parse_with_indent(input, 0)
     }
 
+    pub fn parse_with_parent(input: &str, parent_id: Option<String>) -> Self {
+        Self::parse_with_parent_and_indent(input, parent_id, 0)
+    }
+
     pub fn parse_with_indent(input: &str, indent_level: usize) -> Self {
+        Self::parse_with_parent_and_indent(input, None, indent_level)
+    }
+
+    pub fn parse_with_parent_and_indent(input: &str, parent_id: Option<String>, indent_level: usize) -> Self {
         let deadline_re = Regex::new(r"!(\d{4}-\d{2}-\d{2})").unwrap();
         let tags_re = Regex::new(r"#(\w+)").unwrap();
         let reminder_date_re = Regex::new(r"@(\d{4}-\d{2}-\d{2})").unwrap();
+        let id_re = Regex::new(r"\[id:([a-f0-9-]+)\]").unwrap();
         
         // Use a simpler approach: parse notes with regex that stops at metadata
         let notes_re = Regex::new(r"//([^!@#]+)").unwrap();
         let notes = notes_re.find(input)
             .map(|m| m.as_str().trim_start_matches("//").trim().to_string())
             .filter(|s| !s.is_empty());
+        
+        // Extract existing ID or generate new one
+        let task_id = id_re.find(input)
+            .map(|m| m.as_str().trim_start_matches("[id:").trim_end_matches("]").to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         
         let deadline = deadline_re.find(input)
             .and_then(|m| NaiveDate::parse_from_str(m.as_str().trim_start_matches('!'), "%Y-%m-%d").ok())
@@ -314,9 +389,11 @@ impl Task {
         clean_text = reminder_date_re.replace_all(&clean_text, "").to_string();
         clean_text = Self::remove_natural_reminder(&clean_text);
         clean_text = notes_re.replace_all(&clean_text, "").to_string();
+        clean_text = id_re.replace_all(&clean_text, "").to_string();
         clean_text = clean_text.trim().to_string();
         
         Task {
+            id: task_id,
             text: clean_text,
             deadline,
             tags,
@@ -325,13 +402,14 @@ impl Task {
             notes,
             subtasks: Vec::new(),
             indent_level,
+            parent_id,
         }
     }
     
     pub fn to_markdown(&self) -> String {
         let checkbox = if self.completed { "[x]" } else { "[ ]" };
         let indent = "  ".repeat(self.indent_level);
-        let mut result = format!("{}- {} {}", indent, checkbox, self.text);
+        let mut result = format!("{}- {} {} [id:{}]", indent, checkbox, self.text, &self.id[..8]);
         
         if let Some(ref deadline) = self.deadline {
             result.push_str(&format!(" !{}", deadline.format("%Y-%m-%d")));
