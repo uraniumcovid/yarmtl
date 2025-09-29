@@ -28,3 +28,4 @@
 - [ ] Another test task #git //Testing git commits
 - [ ] Perfect display #order //This comment comes at the end
 - [ ] Test task !2025-09-30 #test //Comment first then deadline !tomorrow #test
+- [ ] Fixed parsing !2025-09-30 #test @2025-09-29 //Comment before deadline
