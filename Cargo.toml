@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+openssl = { version = "*", features = ["vendored"] }
 comrak ="0.21"
 chrono = { version = "0.4", features = ["serde"] }
 ratatui = "0.26"
