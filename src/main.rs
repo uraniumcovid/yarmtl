@@ -44,8 +44,23 @@ fn get_working_dir() -> PathBuf {
     WORKING_DIR.get().cloned().unwrap_or_else(|| env::current_dir().unwrap())
 }
 
+fn get_sync_dir() -> PathBuf {
+    PathBuf::from(env::var("HOME").unwrap_or_default())
+        .join(".local/share/yarmtl/yarmtl-tasks")
+}
+
 fn get_tasks_file_path() -> PathBuf {
-    get_working_dir().join("tasks.md")
+    let sync_dir = get_sync_dir();
+    
+    if !sync_dir.exists() {
+        if let Err(e) = fs::create_dir_all(&sync_dir) {
+            eprintln!("Error: Failed to create sync directory {}: {}", sync_dir.display(), e);
+            eprintln!("Please ensure you have write permissions to {}", sync_dir.parent().unwrap_or(&sync_dir).display());
+            std::process::exit(1);
+        }
+    }
+    
+    sync_dir.join("tasks.md")
 }
 
 fn get_email_config_path() -> PathBuf {
@@ -591,25 +606,27 @@ impl Task {
 }
 
 pub fn git_repo_check() -> Result<(), String> {
-    let git_dir = get_working_dir().join(".git");
+    let sync_dir = get_sync_dir();
+    let git_dir = sync_dir.join(".git");
+    
     if !git_dir.exists() {
         Command::new("git")
             .args(["init"])
-            .current_dir(get_working_dir())
+            .current_dir(&sync_dir)
             .output()
             .map_err(|e| format!("failed to initialize git: {}", e))?;
 
-        println!("🔧 Initialized git repository for task versioning");
+        println!("🔧 Initialized git repository for task versioning in {}", sync_dir.display());
         
         // Set git user if not configured
         let _ = Command::new("git")
             .args(["config", "user.email", "yarmtl@local"])
-            .current_dir(get_working_dir())
+            .current_dir(&sync_dir)
             .output();
         
         let _ = Command::new("git")
             .args(["config", "user.name", "YARMTL"])
-            .current_dir(get_working_dir())
+            .current_dir(&sync_dir)
             .output();
         
         // Create initial commit if tasks.md exists
@@ -617,7 +634,7 @@ pub fn git_repo_check() -> Result<(), String> {
         if tasks_file.exists() {
             let add_result = Command::new("git")
                 .args(["add", "tasks.md"])
-                .current_dir(get_working_dir())
+                .current_dir(&sync_dir)
                 .output()
                 .map_err(|e| format!("git add failed: {}", e))?;
 
@@ -629,7 +646,7 @@ pub fn git_repo_check() -> Result<(), String> {
 
             let commit_result = Command::new("git")
                 .args(["commit", "-m", "🎉 Initial YARMTL tasks commit"])
-                .current_dir(get_working_dir())
+                .current_dir(&sync_dir)
                 .output()
                 .map_err(|e| format!("git initial commit failed: {}", e))?;
             
@@ -651,10 +668,12 @@ pub fn git_commit_tasks() -> Result<(), String> {
 
 pub fn git_commit_tasks_with_message(custom_message: Option<&str>) -> Result<(), String> {
     git_repo_check()?;
+    
+    let sync_dir = get_sync_dir();
 
     let add_result = Command::new("git")
         .args(["add", "tasks.md"])
-        .current_dir(get_working_dir())
+        .current_dir(&sync_dir)
         .output()
         .map_err(|e| format!("git add failed: {}", e))?;
 
@@ -666,7 +685,7 @@ pub fn git_commit_tasks_with_message(custom_message: Option<&str>) -> Result<(),
     // Check if there are changes to commit
     let status_output = Command::new("git")
         .args(["status", "--porcelain"])
-        .current_dir(get_working_dir())
+        .current_dir(&sync_dir)
         .output()
         .map_err(|e| format!("git status failed: {}", e))?;
 
@@ -684,13 +703,61 @@ pub fn git_commit_tasks_with_message(custom_message: Option<&str>) -> Result<(),
 
     let commit_result = Command::new("git")
         .args(["commit", "-m", &message])
-        .current_dir(get_working_dir())
+        .current_dir(&sync_dir)
         .output()
         .map_err(|e| format!("git commit failed: {}", e))?;
 
     if !commit_result.status.success() {
         let error = String::from_utf8_lossy(&commit_result.stderr);
         return Err(format!("git commit failed: {}", error));
+    }
+
+    // Try to push to remote if it exists
+    git_push_if_remote_exists(&sync_dir)?;
+
+    Ok(())
+}
+
+pub fn git_push_if_remote_exists(sync_dir: &PathBuf) -> Result<(), String> {
+    // Check if there's a remote configured
+    let remote_check = Command::new("git")
+        .args(["remote"])
+        .current_dir(sync_dir)
+        .output()
+        .map_err(|e| format!("git remote check failed: {}", e))?;
+
+    if remote_check.stdout.is_empty() {
+        // No remote configured, skip push
+        return Ok(());
+    }
+
+    // Check if we're on a branch that tracks a remote
+    let branch_check = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(sync_dir)
+        .output()
+        .map_err(|e| format!("git branch check failed: {}", e))?;
+
+    if !branch_check.status.success() {
+        return Ok(()); // No branch yet, skip push
+    }
+
+    let current_branch = String::from_utf8_lossy(&branch_check.stdout).trim().to_string();
+
+    // Try to push
+    let push_result = Command::new("git")
+        .args(["push", "origin", &current_branch])
+        .current_dir(sync_dir)
+        .output()
+        .map_err(|e| format!("git push failed: {}", e))?;
+
+    if push_result.status.success() {
+        println!("🚀 Pushed changes to remote repository");
+    } else {
+        let error = String::from_utf8_lossy(&push_result.stderr);
+        // Don't fail the whole operation if push fails, just warn
+        eprintln!("Warning: Failed to push to remote: {}", error);
+        eprintln!("You may need to run 'git push' manually in {}", sync_dir.display());
     }
 
     Ok(())
