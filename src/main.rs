@@ -166,7 +166,7 @@ async fn main() {
                 list_tasks(cli.done);
             } else {
                 println!("🚀 Launching YARMTL TUI...");
-                if let Err(e) = tui::run_tui(&get_working_dir()) {
+                if let Err(e) = tui::run_tui(&get_sync_dir()) {
                     eprintln!("TUI failed: {}", e);
                 }
             }
