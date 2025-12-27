@@ -622,7 +622,7 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("━━━ {} ━━━", section_name),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default().fg(Color::Rgb(255, 107, 138)).add_modifier(Modifier::BOLD)
                 )
             ])));
             
@@ -644,7 +644,7 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                     if task.completed {
                         Style::default().fg(Color::Green)
                     } else {
-                        Style::default().fg(Color::Cyan)
+                        Style::default().fg(Color::Rgb(255, 107, 138))
                     }
                 ));
 
@@ -668,9 +668,9 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                     let (indicator, color) = if deadline < today {
                         (" ⚠️ OVERDUE", Color::Red)
                     } else if deadline == today {
-                        (" 🔴 DUE TODAY", Color::Magenta)
+                        (" 🔴 DUE TODAY", Color::Rgb(255, 107, 138))
                     } else {
-                        (" 📅", Color::Cyan)
+                        (" 📅", Color::Rgb(255, 107, 138))
                     };
                     
                     spans.push(Span::styled(
@@ -691,7 +691,7 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
                 if let Some(reminder) = task.reminder {
                     spans.push(Span::styled(
                         format!(" 🔔{}", reminder.format("%m/%d")),
-                        Style::default().fg(Color::Magenta)
+                        Style::default().fg(Color::Rgb(255, 107, 138))
                     ));
                 }
 
@@ -743,8 +743,8 @@ fn draw_task_list(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         .block(Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .border_style(Style::default().fg(Color::Cyan)))
-        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta))
+            .border_style(Style::default().fg(Color::Rgb(255, 107, 138))))
+        .highlight_style(Style::default().bg(Color::Black).fg(Color::Rgb(255, 107, 138)))
         .highlight_symbol("► ");
 
     f.render_stateful_widget(tasks_list, area, &mut app.list_state);
@@ -779,8 +779,8 @@ fn draw_tags_menu(f: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         .block(Block::default()
             .borders(Borders::ALL)
             .title("Tags Menu")
-            .border_style(Style::default().fg(Color::Green)))
-        .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta))
+            .border_style(Style::default().fg(Color::Rgb(255, 107, 138))))
+        .highlight_style(Style::default().bg(Color::Black).fg(Color::Rgb(255, 107, 138)))
         .highlight_symbol("► ");
 
     f.render_stateful_widget(tags_list, area, &mut app.tags_list_state);
@@ -790,12 +790,12 @@ fn draw_input(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let input = Paragraph::new(app.input.as_str())
         .style(match app.input_mode {
             InputMode::Normal => Style::default().fg(Color::White),
-            InputMode::Editing => Style::default().fg(Color::Magenta),
+            InputMode::Editing => Style::default().fg(Color::Rgb(255, 107, 138)),
         })
         .block(Block::default()
             .borders(Borders::ALL)
             .title("Add Task")
-            .border_style(Style::default().fg(Color::Green)))
+            .border_style(Style::default().fg(Color::Rgb(255, 107, 138))))
         .wrap(Wrap { trim: true });
     
     f.render_widget(input, area);
@@ -835,7 +835,7 @@ fn draw_status_line(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     );
 
     let status = Paragraph::new(status_text)
-        .style(Style::default().fg(Color::Cyan).bg(Color::Black));
+        .style(Style::default().fg(Color::White).bg(Color::Black));
     
     f.render_widget(status, area);
 }
@@ -844,16 +844,16 @@ fn draw_splash_screen(f: &mut Frame) {
     let splash_art = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("    ██    ██  █████  ██████  ███    ███ ████████ ██      ", Style::default().fg(Color::Magenta)),
+            Span::styled("    ██    ██  █████  ██████  ███    ███ ████████ ██      ", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("     ██  ██  ██   ██ ██   ██ ████  ████    ██    ██      ", Style::default().fg(Color::Magenta)),
+            Span::styled("     ██  ██  ██   ██ ██   ██ ████  ████    ██    ██      ", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("      ████   ███████ ██████  ██ ████ ██    ██    ██      ", Style::default().fg(Color::Cyan)),
+            Span::styled("      ████   ███████ ██████  ██ ████ ██    ██    ██      ", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("       ██    ██   ██ ██   ██ ██  ██  ██    ██    ██      ", Style::default().fg(Color::Cyan)),
+            Span::styled("       ██    ██   ██ ██   ██ ██  ██  ██    ██    ██      ", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
             Span::styled("       ██    ██   ██ ██   ██ ██      ██    ██    ███████ ", Style::default().fg(Color::Green)),
@@ -864,29 +864,29 @@ fn draw_splash_screen(f: &mut Frame) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("    ┌─────────────────────────────────────────────────────────────┐", Style::default().fg(Color::Cyan)),
+            Span::styled("    ┌─────────────────────────────────────────────────────────────┐", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("    │  📝 ", Style::default().fg(Color::Cyan)),
+            Span::styled("    │  📝 ", Style::default().fg(Color::Rgb(255, 107, 138))),
             Span::styled("Organize your tasks with deadlines and projects    ", Style::default().fg(Color::White)),
-            Span::styled("│", Style::default().fg(Color::Cyan)),
+            Span::styled("│", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("    │  ⚡ ", Style::default().fg(Color::Cyan)),
+            Span::styled("    │  ⚡ ", Style::default().fg(Color::Rgb(255, 107, 138))),
             Span::styled("Fast, lightweight, and markdown-based             ", Style::default().fg(Color::White)),
-            Span::styled("│", Style::default().fg(Color::Cyan)),
+            Span::styled("│", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("    │  🎯 ", Style::default().fg(Color::Cyan)),
+            Span::styled("    │  🎯 ", Style::default().fg(Color::Rgb(255, 107, 138))),
             Span::styled("Visual deadline tracking and email reminders      ", Style::default().fg(Color::White)),
-            Span::styled("│", Style::default().fg(Color::Cyan)),
+            Span::styled("│", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(vec![
-            Span::styled("    └─────────────────────────────────────────────────────────────┘", Style::default().fg(Color::Cyan)),
+            Span::styled("    └─────────────────────────────────────────────────────────────┘", Style::default().fg(Color::Rgb(255, 107, 138))),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("                    Press any key to continue...", Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC)),
+            Span::styled("                    Press any key to continue...", Style::default().fg(Color::Rgb(255, 107, 138)).add_modifier(Modifier::ITALIC)),
         ]),
     ];
 
@@ -914,12 +914,12 @@ fn draw_notes_popup(f: &mut Frame, app: &App) {
             
             let notes_lines = vec![
                 Line::from(vec![
-                    Span::styled("Task: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("Task: ", Style::default().fg(Color::Rgb(255, 107, 138))),
                     Span::styled(&task.text, Style::default().fg(Color::White)),
                 ]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Notes:", Style::default().fg(Color::Magenta)),
+                    Span::styled("Notes:", Style::default().fg(Color::Rgb(255, 107, 138))),
                 ]),
                 Line::from(""),
                 Line::from(vec![
@@ -935,7 +935,7 @@ fn draw_notes_popup(f: &mut Frame, app: &App) {
                 .block(Block::default()
                     .title("Task Notes")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green)))
+                    .border_style(Style::default().fg(Color::Rgb(255, 107, 138))))
                 .wrap(Wrap { trim: true });
 
             f.render_widget(notes_paragraph, popup_area);

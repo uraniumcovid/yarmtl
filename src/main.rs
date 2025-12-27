@@ -726,8 +726,11 @@ pub fn git_push_if_remote_exists(sync_dir: &PathBuf) -> Result<(), String> {
         .output()
         .map_err(|e| format!("git remote check failed: {}", e))?;
 
+    eprintln!("DEBUG: Remote check output: '{}'", String::from_utf8_lossy(&remote_check.stdout));
+
     if remote_check.stdout.is_empty() {
         // No remote configured, skip push
+        eprintln!("DEBUG: No remote configured, skipping push");
         return Ok(());
     }
 
