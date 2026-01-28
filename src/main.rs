@@ -846,6 +846,12 @@ pub async fn trigger_todoist_sync() -> Result<(), Box<dyn std::error::Error>> {
     if report.created_in_todoist + report.updated_in_todoist + report.created_in_yarmtl +
        report.updated_in_yarmtl + report.deleted_in_todoist + report.deleted_in_yarmtl > 0 {
         println!("☁️  Synced with Todoist: {}", report.summary());
+
+        // Commit changes from Todoist sync
+        if report.created_in_yarmtl + report.updated_in_yarmtl + report.deleted_in_yarmtl > 0 {
+            let commit_msg = format!("🔄 Synced from Todoist: {}", report.summary());
+            let _ = git_commit_tasks_with_message(Some(&commit_msg));
+        }
     }
 
     Ok(())

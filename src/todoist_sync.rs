@@ -194,7 +194,7 @@ impl TodoistSync {
                     let stored_hash = self.metadata.get_hash(&local_task.id);
 
                     if stored_hash.map(|h| h != local_hash).unwrap_or(true) {
-                        // Local changed, update Todoist (Todoist wins on conflict, but we don't detect that here)
+                        // Local changed, update Todoist
                         actions.push(SyncAction::UpdateTodoist {
                             yarmtl_id: local_task.id.clone(),
                             task: local_task.clone(),
@@ -207,7 +207,14 @@ impl TodoistSync {
                     });
                 }
             } else {
-                // New local task
+                // Task not in metadata - could be new, or old completed task
+                // Skip completed tasks without deadlines/reminders (likely old test tasks)
+                if local_task.completed && local_task.deadline.is_none() && local_task.reminder.is_none() {
+                    // Skip old completed tasks to avoid re-syncing test tasks
+                    continue;
+                }
+
+                // New local task - create in Todoist
                 actions.push(SyncAction::CreateInTodoist(local_task.clone()));
             }
         }
