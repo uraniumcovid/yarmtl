@@ -140,17 +140,13 @@ impl App {
 
         let _ = fs::write(&task_file, content);
 
-        // Auto-commit the task changes with custom message
-        if let Err(e) = git_commit_tasks_with_message(commit_message) {
-            eprintln!("Warning: Failed to commit tasks to git: {}", e);
-        }
+        // Auto-commit the task changes with custom message (silently)
+        let _ = git_commit_tasks_with_message(commit_message);
 
-        // Trigger Todoist sync in background
+        // Trigger Todoist sync in background (silently)
         if is_todoist_sync_enabled() {
             tokio::spawn(async move {
-                if let Err(e) = trigger_todoist_sync().await {
-                    eprintln!("⚠ Todoist sync failed: {}", e);
-                }
+                let _ = trigger_todoist_sync().await;
             });
         }
     }

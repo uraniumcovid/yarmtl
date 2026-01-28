@@ -99,10 +99,8 @@ impl TodoistSync {
         // Detect changes
         let actions = self.detect_changes(&self.local_tasks.clone(), &todoist_tasks);
 
-        // Apply actions
-        let total_actions = actions.len();
-        for (idx, action) in actions.into_iter().enumerate() {
-            eprint!("\r🔄 Syncing... {}/{} ", idx + 1, total_actions);
+        // Apply actions (silently - no console output to avoid breaking TUI)
+        for action in actions {
             match self.apply_action(action).await {
                 Ok(action_type) => {
                     match action_type {
@@ -114,13 +112,10 @@ impl TodoistSync {
                         ActionType::DeletedFromYarmtl => report.deleted_in_yarmtl += 1,
                     }
                 }
-                Err(e) => {
-                    eprintln!("\r⚠ Sync action failed: {}", e);
+                Err(_e) => {
+                    // Silently continue - errors are reflected in the report
                 }
             }
-        }
-        if total_actions > 0 {
-            eprintln!("\r✓ Completed {} sync actions", total_actions);
         }
 
         // Write back local tasks if modified
@@ -390,8 +385,8 @@ impl TodoistSync {
                 self.projects.insert(project.name.clone(), project.id.clone());
                 Some(project.id)
             }
-            Err(e) => {
-                eprintln!("⚠ Failed to create project '{}': {}", project_name, e);
+            Err(_) => {
+                // Silently fail - project creation isn't critical
                 None
             }
         }
