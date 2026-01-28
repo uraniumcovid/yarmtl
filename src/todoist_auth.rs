@@ -1,6 +1,8 @@
 use keyring::Entry;
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::path::PathBuf;
 
 const KEYRING_SERVICE: &str = "yarmtl-todoist";
 const KEYRING_USERNAME: &str = "api-token";
@@ -10,6 +12,7 @@ pub enum AuthError {
     KeyringError(String),
     TokenNotFound,
     InvalidToken,
+    IoError(String),
 }
 
 impl fmt::Display for AuthError {
@@ -18,6 +21,7 @@ impl fmt::Display for AuthError {
             AuthError::KeyringError(msg) => write!(f, "Keyring error: {}", msg),
             AuthError::TokenNotFound => write!(f, "Todoist API token not found. Run 'yarmtl --setup-todoist' to configure."),
             AuthError::InvalidToken => write!(f, "Invalid Todoist API token"),
+            AuthError::IoError(msg) => write!(f, "IO error: {}", msg),
         }
     }
 }
@@ -27,33 +31,85 @@ impl Error for AuthError {}
 pub struct TodoistAuth;
 
 impl TodoistAuth {
-    pub fn store_token(token: &str) -> Result<(), AuthError> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-            .map_err(|e| AuthError::KeyringError(e.to_string()))?;
+    fn get_token_file_path() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home)
+            .join(".local/share/yarmtl")
+            .join(".todoist_token")
+    }
 
-        entry
-            .set_password(token)
-            .map_err(|e| AuthError::KeyringError(e.to_string()))?;
+    pub fn store_token(token: &str) -> Result<(), AuthError> {
+        // Try keyring first
+        match Entry::new(KEYRING_SERVICE, KEYRING_USERNAME) {
+            Ok(entry) => {
+                if let Ok(()) = entry.set_password(token) {
+                    return Ok(());
+                }
+            }
+            Err(_) => {}
+        }
+
+        // Fallback to file storage
+        eprintln!("⚠ System keyring not available, using file storage (less secure)");
+        let token_file = Self::get_token_file_path();
+
+        // Create parent directory if needed
+        if let Some(parent) = token_file.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| AuthError::IoError(e.to_string()))?;
+        }
+
+        // Write token to file with restricted permissions
+        fs::write(&token_file, token)
+            .map_err(|e| AuthError::IoError(e.to_string()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&token_file, fs::Permissions::from_mode(0o600))
+                .map_err(|e| AuthError::IoError(e.to_string()))?;
+        }
 
         Ok(())
     }
 
     pub fn get_token() -> Result<String, AuthError> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-            .map_err(|e| AuthError::KeyringError(e.to_string()))?;
+        // Try keyring first
+        match Entry::new(KEYRING_SERVICE, KEYRING_USERNAME) {
+            Ok(entry) => {
+                if let Ok(token) = entry.get_password() {
+                    return Ok(token);
+                }
+            }
+            Err(_) => {}
+        }
 
-        entry
-            .get_password()
+        // Fallback to file storage
+        let token_file = Self::get_token_file_path();
+        if !token_file.exists() {
+            return Err(AuthError::TokenNotFound);
+        }
+
+        fs::read_to_string(&token_file)
+            .map(|s| s.trim().to_string())
             .map_err(|_| AuthError::TokenNotFound)
     }
 
     pub fn delete_token() -> Result<(), AuthError> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-            .map_err(|e| AuthError::KeyringError(e.to_string()))?;
+        // Try keyring first
+        match Entry::new(KEYRING_SERVICE, KEYRING_USERNAME) {
+            Ok(entry) => {
+                let _ = entry.delete_password();
+            }
+            Err(_) => {}
+        }
 
-        entry
-            .delete_password()
-            .map_err(|e| AuthError::KeyringError(e.to_string()))?;
+        // Also delete file if exists
+        let token_file = Self::get_token_file_path();
+        if token_file.exists() {
+            fs::remove_file(&token_file)
+                .map_err(|e| AuthError::IoError(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -75,6 +131,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore] // Requires system keyring access, not available in Nix sandbox
     fn test_token_operations() {
         let test_token = "test-token-12345";
 
