@@ -225,8 +225,13 @@ impl TodoistSync {
                 let created = self.client.create_task(&todoist_task).await?;
 
                 if let Some(todoist_id) = created.id {
+                    // If task is completed, close it in Todoist
+                    if task.completed {
+                        let _ = self.client.close_task(&todoist_id).await;
+                    }
+
                     let info = TaskSyncInfo {
-                        todoist_id,
+                        todoist_id: todoist_id.clone(),
                         last_modified: Utc::now(),
                         last_sync_hash: self.compute_task_hash(&task),
                     };
@@ -255,6 +260,13 @@ impl TodoistSync {
                 if let Some(todoist_id) = self.metadata.get_todoist_id(&yarmtl_id) {
                     let todoist_task = self.convert_yarmtl_to_todoist(&task);
                     self.client.update_task(todoist_id, &todoist_task).await?;
+
+                    // Handle completion status changes
+                    if task.completed {
+                        let _ = self.client.close_task(todoist_id).await;
+                    } else {
+                        let _ = self.client.reopen_task(todoist_id).await;
+                    }
 
                     let info = TaskSyncInfo {
                         todoist_id: todoist_id.to_string(),
@@ -318,7 +330,7 @@ impl TodoistSync {
             due,
             labels,
             priority,
-            is_completed: Some(task.completed),
+            is_completed: None, // Don't set here, use close_task/reopen_task instead
             project_id: None,
         }
     }

@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,61 +46,56 @@ pub struct YarmtlMetadata {
 
 impl YarmtlMetadata {
     pub fn encode(&self) -> String {
-        let mut meta = String::from("[YARMTL-META]\n");
-        meta.push_str(&format!("id: {}\n", self.id));
+        let mut meta = String::new();
 
+        // Add reminder using @date syntax
         if let Some(reminder) = &self.reminder {
-            meta.push_str(&format!("reminder: {}\n", reminder));
+            meta.push_str(&format!("@{} ", reminder));
         }
 
+        // Add importance using $1-5 syntax
         if let Some(importance) = self.importance {
-            meta.push_str(&format!("importance: {}\n", importance));
+            meta.push_str(&format!("${} ", importance));
         }
 
+        // Add notes using //notes syntax
         if let Some(notes) = &self.notes {
-            meta.push_str(&format!("notes: {}\n", notes));
+            meta.push_str(&format!("//{} ", notes));
         }
 
-        meta.push_str("[/YARMTL-META]");
-        meta
+        // Add yarmtl ID at the end
+        meta.push_str(&format!("[yarmtl:{}]", self.id));
+
+        meta.trim().to_string()
     }
 
     pub fn parse(description: &str) -> Option<Self> {
-        if !description.contains("[YARMTL-META]") || !description.contains("[/YARMTL-META]") {
-            return None;
-        }
+        // Extract yarmtl ID - if not present, this isn't a yarmtl task
+        let id_re = Regex::new(r"\[yarmtl:([a-f0-9-]+)\]").ok()?;
+        let id = id_re.captures(description)
+            .and_then(|cap| cap.get(1))
+            .map(|m| m.as_str().to_string())?;
 
-        let start = description.find("[YARMTL-META]")? + "[YARMTL-META]".len();
-        let end = description.find("[/YARMTL-META]")?;
-        let meta_section = &description[start..end];
+        // Extract reminder (@date)
+        let reminder_re = Regex::new(r"@(\d{4}-\d{2}-\d{2})").ok()?;
+        let reminder = reminder_re.captures(description)
+            .and_then(|cap| cap.get(1))
+            .map(|m| m.as_str().to_string());
 
-        let mut id = None;
-        let mut reminder = None;
-        let mut notes = None;
-        let mut importance = None;
+        // Extract importance ($1-5)
+        let importance_re = Regex::new(r"\$([1-5])").ok()?;
+        let importance = importance_re.captures(description)
+            .and_then(|cap| cap.get(1))
+            .and_then(|m| m.as_str().parse().ok());
 
-        for line in meta_section.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim();
-                let value = value.trim();
-
-                match key {
-                    "id" => id = Some(value.to_string()),
-                    "reminder" => reminder = Some(value.to_string()),
-                    "importance" => importance = value.parse().ok(),
-                    "notes" => notes = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
+        // Extract notes (//text)
+        let notes_re = Regex::new(r"//([^$@\[]+)").ok()?;
+        let notes = notes_re.captures(description)
+            .and_then(|cap| cap.get(1))
+            .map(|m| m.as_str().trim().to_string());
 
         Some(YarmtlMetadata {
-            id: id?,
+            id,
             reminder,
             notes,
             importance,
@@ -121,6 +117,12 @@ mod tests {
         };
 
         let encoded = meta.encode();
+        // Should be in format: @2026-01-28 $3 //Important task [yarmtl:abc12345]
+        assert!(encoded.contains("@2026-01-28"));
+        assert!(encoded.contains("$3"));
+        assert!(encoded.contains("//Important task"));
+        assert!(encoded.contains("[yarmtl:abc12345]"));
+
         let decoded = YarmtlMetadata::parse(&encoded).unwrap();
 
         assert_eq!(decoded.id, "abc12345");
