@@ -316,6 +316,7 @@ impl TodoistSync {
 
         let metadata = YarmtlMetadata {
             id: task.id.clone(),
+            deadline: task.deadline.map(|d| d.format("%Y-%m-%d").to_string()),
             reminder: task.reminder.map(|r| r.format("%Y-%m-%d").to_string()),
             notes: task.notes.clone(),
             importance: task.importance,
@@ -346,10 +347,17 @@ impl TodoistSync {
             .map(|m| m.id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()[..8].to_string());
 
+        // Prefer deadline from Todoist's due field, fall back to metadata
         let deadline = todoist_task
             .due
             .as_ref()
-            .and_then(|d| NaiveDate::parse_from_str(&d.date, "%Y-%m-%d").ok());
+            .and_then(|d| NaiveDate::parse_from_str(&d.date, "%Y-%m-%d").ok())
+            .or_else(|| {
+                metadata
+                    .as_ref()
+                    .and_then(|m| m.deadline.as_ref())
+                    .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            });
 
         let tags = todoist_task.labels.clone().unwrap_or_default();
 

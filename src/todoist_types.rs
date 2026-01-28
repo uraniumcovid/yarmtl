@@ -39,6 +39,7 @@ pub struct TodoistLabel {
 #[derive(Debug, Clone)]
 pub struct YarmtlMetadata {
     pub id: String,
+    pub deadline: Option<String>, // Date string YYYY-MM-DD
     pub reminder: Option<String>, // Date string YYYY-MM-DD
     pub notes: Option<String>,
     pub importance: Option<u8>,
@@ -47,6 +48,11 @@ pub struct YarmtlMetadata {
 impl YarmtlMetadata {
     pub fn encode(&self) -> String {
         let mut meta = String::new();
+
+        // Add deadline using !date syntax
+        if let Some(deadline) = &self.deadline {
+            meta.push_str(&format!("!{} ", deadline));
+        }
 
         // Add reminder using @date syntax
         if let Some(reminder) = &self.reminder {
@@ -76,6 +82,12 @@ impl YarmtlMetadata {
             .and_then(|cap| cap.get(1))
             .map(|m| m.as_str().to_string())?;
 
+        // Extract deadline (!date)
+        let deadline_re = Regex::new(r"!(\d{4}-\d{2}-\d{2})").ok()?;
+        let deadline = deadline_re.captures(description)
+            .and_then(|cap| cap.get(1))
+            .map(|m| m.as_str().to_string());
+
         // Extract reminder (@date)
         let reminder_re = Regex::new(r"@(\d{4}-\d{2}-\d{2})").ok()?;
         let reminder = reminder_re.captures(description)
@@ -89,13 +101,14 @@ impl YarmtlMetadata {
             .and_then(|m| m.as_str().parse().ok());
 
         // Extract notes (//text)
-        let notes_re = Regex::new(r"//([^$@\[]+)").ok()?;
+        let notes_re = Regex::new(r"//([^$@!\[]+)").ok()?;
         let notes = notes_re.captures(description)
             .and_then(|cap| cap.get(1))
             .map(|m| m.as_str().trim().to_string());
 
         Some(YarmtlMetadata {
             id,
+            deadline,
             reminder,
             notes,
             importance,
@@ -111,13 +124,15 @@ mod tests {
     fn test_metadata_encode_decode() {
         let meta = YarmtlMetadata {
             id: "abc12345".to_string(),
+            deadline: Some("2026-01-30".to_string()),
             reminder: Some("2026-01-28".to_string()),
             notes: Some("Important task".to_string()),
             importance: Some(3),
         };
 
         let encoded = meta.encode();
-        // Should be in format: @2026-01-28 $3 //Important task [yarmtl:abc12345]
+        // Should be in format: !2026-01-30 @2026-01-28 $3 //Important task [yarmtl:abc12345]
+        assert!(encoded.contains("!2026-01-30"));
         assert!(encoded.contains("@2026-01-28"));
         assert!(encoded.contains("$3"));
         assert!(encoded.contains("//Important task"));
@@ -126,6 +141,7 @@ mod tests {
         let decoded = YarmtlMetadata::parse(&encoded).unwrap();
 
         assert_eq!(decoded.id, "abc12345");
+        assert_eq!(decoded.deadline, Some("2026-01-30".to_string()));
         assert_eq!(decoded.reminder, Some("2026-01-28".to_string()));
         assert_eq!(decoded.notes, Some("Important task".to_string()));
         assert_eq!(decoded.importance, Some(3));
