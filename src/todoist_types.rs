@@ -11,6 +11,8 @@ pub struct TodoistTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub due: Option<TodoistDue>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<String>, // For sending to API: YYYY-MM-DD
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<u8>,

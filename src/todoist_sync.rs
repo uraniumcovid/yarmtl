@@ -398,11 +398,8 @@ impl TodoistSync {
     }
 
     fn convert_yarmtl_to_todoist(&self, task: &Task) -> TodoistTask {
-        let due = task.deadline.map(|d| TodoistDue {
-            date: d.format("%Y-%m-%d").to_string(),
-            datetime: None,
-            timezone: None,
-        });
+        // Set due_date as string for API requests
+        let due_date = task.deadline.map(|d| d.format("%Y-%m-%d").to_string());
 
         // First tag becomes project, rest become labels
         let (project_id, labels) = if task.tags.is_empty() {
@@ -443,7 +440,8 @@ impl TodoistSync {
             id: None, // Will be set by Todoist
             content: task.text.clone(),
             description,
-            due,
+            due: None, // Will be populated in API responses
+            due_date,  // Used for API requests
             labels,
             priority,
             is_completed: None, // Don't set here, use close_task/reopen_task instead
