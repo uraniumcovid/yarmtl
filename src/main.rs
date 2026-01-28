@@ -2,6 +2,11 @@
 // clap = { version = "4.0", features = ["derive"] }
 
 mod tui;
+mod todoist_types;
+mod todoist_auth;
+mod todoist_client;
+mod sync_metadata;
+mod todoist_sync;
 
 use clap::Parser;
 use std::fs;
@@ -67,6 +72,10 @@ fn get_email_config_path() -> PathBuf {
     get_working_dir().join("email_config.toml")
 }
 
+fn get_todoist_config_path() -> PathBuf {
+    get_sync_dir().join("todoist_config.toml")
+}
+
 
 #[derive(Deserialize, Serialize)]
 struct EmailConfig {
@@ -87,6 +96,25 @@ impl Default for EmailConfig {
             password: "your_app_password".to_string(),
             from_email: "your_email@gmail.com".to_string(),
             to_email: "your_email@gmail.com".to_string(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct TodoistConfig {
+    enabled: bool,
+    project_id: Option<String>,
+    auto_sync: bool,
+    last_sync_timestamp: Option<String>,
+}
+
+impl Default for TodoistConfig {
+    fn default() -> Self {
+        TodoistConfig {
+            enabled: true,
+            project_id: None,
+            auto_sync: true,
+            last_sync_timestamp: None,
         }
     }
 }
@@ -113,7 +141,11 @@ struct Cli {
     /// setup email configuration
     #[arg(long)]
     setup_email: bool,
-    
+
+    /// setup todoist api integration
+    #[arg(long)]
+    setup_todoist: bool,
+
     /// run as daemon, sending emails at 5 AM daily
     #[arg(long)]
     daemon: bool,
@@ -141,7 +173,12 @@ async fn main() {
         setup_email_config();
         return;
     }
-    
+
+    if cli.setup_todoist {
+        setup_todoist_config().await;
+        return;
+    }
+
     if cli.daemon {
         if let Err(e) = run_daemon().await {
             eprintln!("Daemon failed: {}", e);
@@ -216,6 +253,15 @@ pub fn add_task(text: &str) {
     }
     if let Some(importance) = task.importance {
         println!("  ⭐ importance: ${}", importance);
+    }
+
+    // Trigger Todoist sync
+    if is_todoist_sync_enabled() {
+        tokio::spawn(async move {
+            if let Err(e) = trigger_todoist_sync().await {
+                eprintln!("⚠ Todoist sync failed: {}", e);
+            }
+        });
     }
 }
 
@@ -393,7 +439,7 @@ fn print_task(task: &Task, is_completed: bool) {
     println!();
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, std::hash::Hash)]
 pub struct Task {
     pub id: String,
     pub text: String,
@@ -766,6 +812,45 @@ pub fn git_push_if_remote_exists(sync_dir: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+pub fn is_todoist_sync_enabled() -> bool {
+    let config_file = get_todoist_config_path();
+    if !config_file.exists() {
+        return false;
+    }
+
+    if let Ok(content) = fs::read_to_string(config_file) {
+        if let Ok(config) = toml::from_str::<TodoistConfig>(&content) {
+            return config.enabled && config.auto_sync;
+        }
+    }
+
+    false
+}
+
+pub async fn trigger_todoist_sync() -> Result<(), Box<dyn std::error::Error>> {
+    if !is_todoist_sync_enabled() {
+        return Ok(());
+    }
+
+    let api_token = match todoist_auth::TodoistAuth::get_token() {
+        Ok(token) => token,
+        Err(_) => return Ok(()), // No token configured, skip sync
+    };
+
+    let sync_dir = get_sync_dir();
+    let tasks_file = get_tasks_file_path();
+
+    let mut sync = todoist_sync::TodoistSync::new(api_token, &sync_dir)?;
+    let report = sync.sync(&tasks_file).await?;
+
+    if report.created_in_todoist + report.updated_in_todoist + report.created_in_yarmtl +
+       report.updated_in_yarmtl + report.deleted_in_todoist + report.deleted_in_yarmtl > 0 {
+        println!("☁️  Synced with Todoist: {}", report.summary());
+    }
+
+    Ok(())
+}
+
 fn load_email_config() -> Result<EmailConfig, Box<dyn std::error::Error>> {
     let config_file = get_email_config_path();
     if !config_file.exists() {
@@ -779,14 +864,14 @@ fn load_email_config() -> Result<EmailConfig, Box<dyn std::error::Error>> {
 
 fn setup_email_config() {
     println!("Setting up email configuration...");
-    
+
     let config = EmailConfig::default();
     let toml_content = toml::to_string_pretty(&config).unwrap();
     let config_file = get_email_config_path();
-    
+
     fs::write(config_file, toml_content)
         .expect("couldn't write email config file");
-    
+
     println!("✓ Created email_config.toml in {}", get_working_dir().display());
     println!("Please edit email_config.toml with your email settings:");
     println!("  - For Gmail: Use app password, not regular password");
@@ -794,6 +879,67 @@ fn setup_email_config() {
     println!("  - smtp_port: Usually 587 for TLS");
     println!("  - username/password: Your email credentials");
     println!("  - from_email/to_email: Sender and recipient emails");
+}
+
+async fn setup_todoist_config() {
+    println!("🔧 Setting up Todoist integration...\n");
+
+    use std::io::{self, Write};
+
+    print!("Please enter your Todoist API token: ");
+    io::stdout().flush().unwrap();
+
+    let mut token = String::new();
+    io::stdin()
+        .read_line(&mut token)
+        .expect("Failed to read token");
+
+    let token = token.trim().to_string();
+
+    if token.is_empty() {
+        eprintln!("❌ Error: API token cannot be empty");
+        eprintln!("\nTo get your Todoist API token:");
+        eprintln!("  1. Go to https://todoist.com/app/settings/integrations");
+        eprintln!("  2. Scroll down to 'API token'");
+        eprintln!("  3. Copy your token and run this command again");
+        return;
+    }
+
+    println!("\n🔐 Verifying token...");
+    match todoist_auth::TodoistAuth::verify_token(&token).await {
+        Ok(true) => {
+            println!("✓ Token verified successfully!");
+
+            if let Err(e) = todoist_auth::TodoistAuth::store_token(&token) {
+                eprintln!("❌ Failed to store token securely: {}", e);
+                return;
+            }
+
+            let config = TodoistConfig::default();
+            let toml_content = toml::to_string_pretty(&config).unwrap();
+            let config_file = get_todoist_config_path();
+
+            fs::write(config_file, toml_content)
+                .expect("couldn't write todoist config file");
+
+            println!("✓ Todoist integration configured!");
+            println!("\nConfiguration:");
+            println!("  - Auto-sync: enabled");
+            println!("  - Config file: {}", get_todoist_config_path().display());
+            println!("\nYour tasks will now sync automatically with Todoist!");
+        }
+        Ok(false) => {
+            eprintln!("❌ Invalid API token. Please check your token and try again.");
+            eprintln!("\nTo get your Todoist API token:");
+            eprintln!("  1. Go to https://todoist.com/app/settings/integrations");
+            eprintln!("  2. Scroll down to 'API token'");
+            eprintln!("  3. Copy your token and run this command again");
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to verify token: {}", e);
+            eprintln!("Please check your internet connection and try again.");
+        }
+    }
 }
 
 async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,0 +1,398 @@
+use crate::sync_metadata::{SyncMetadata, TaskSyncInfo};
+use crate::todoist_client::TodoistClient;
+use crate::todoist_types::{TodoistTask, TodoistDue, YarmtlMetadata};
+use chrono::{NaiveDate, Utc};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
+
+// Import Task from main
+use crate::Task;
+
+#[derive(Debug)]
+pub struct SyncReport {
+    pub created_in_todoist: usize,
+    pub created_in_yarmtl: usize,
+    pub updated_in_todoist: usize,
+    pub updated_in_yarmtl: usize,
+    pub deleted_in_todoist: usize,
+    pub deleted_in_yarmtl: usize,
+    pub conflicts_resolved: usize,
+}
+
+impl SyncReport {
+    pub fn new() -> Self {
+        SyncReport {
+            created_in_todoist: 0,
+            created_in_yarmtl: 0,
+            updated_in_todoist: 0,
+            updated_in_yarmtl: 0,
+            deleted_in_todoist: 0,
+            deleted_in_yarmtl: 0,
+            conflicts_resolved: 0,
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "↑{} ↓{} ⇅{} ✗{}",
+            self.created_in_todoist + self.updated_in_todoist,
+            self.created_in_yarmtl + self.updated_in_yarmtl,
+            self.conflicts_resolved,
+            self.deleted_in_todoist + self.deleted_in_yarmtl
+        )
+    }
+}
+
+#[derive(Debug)]
+pub enum SyncAction {
+    CreateInTodoist(Task),
+    CreateInYarmtl(TodoistTask),
+    UpdateTodoist { yarmtl_id: String, task: Task },
+    UpdateYarmtl { todoist_id: String, task: TodoistTask },
+    DeleteFromTodoist { todoist_id: String },
+    DeleteFromYarmtl { yarmtl_id: String },
+}
+
+pub struct TodoistSync {
+    client: TodoistClient,
+    metadata: SyncMetadata,
+    metadata_path: PathBuf,
+}
+
+impl TodoistSync {
+    pub fn new(api_token: String, sync_dir: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let client = TodoistClient::new(api_token);
+        let metadata_path = sync_dir.join(".sync_metadata.json");
+        let metadata = SyncMetadata::load(&metadata_path)?;
+
+        Ok(TodoistSync {
+            client,
+            metadata,
+            metadata_path,
+        })
+    }
+
+    pub async fn sync(&mut self, tasks_file: &PathBuf) -> Result<SyncReport, Box<dyn std::error::Error>> {
+        let mut report = SyncReport::new();
+
+        // Fetch all tasks from Todoist
+        let todoist_tasks = self.client.list_tasks().await?;
+
+        // Load local tasks
+        let local_tasks = self.load_local_tasks(tasks_file)?;
+
+        // Detect changes
+        let actions = self.detect_changes(&local_tasks, &todoist_tasks);
+
+        // Apply actions
+        for action in actions {
+            match self.apply_action(action).await {
+                Ok(action_type) => {
+                    match action_type {
+                        ActionType::CreatedInTodoist => report.created_in_todoist += 1,
+                        ActionType::CreatedInYarmtl => report.created_in_yarmtl += 1,
+                        ActionType::UpdatedInTodoist => report.updated_in_todoist += 1,
+                        ActionType::UpdatedInYarmtl => report.updated_in_yarmtl += 1,
+                        ActionType::DeletedFromTodoist => report.deleted_in_todoist += 1,
+                        ActionType::DeletedFromYarmtl => report.deleted_in_yarmtl += 1,
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠ Sync action failed: {}", e);
+                }
+            }
+        }
+
+        // Update last sync timestamp
+        self.metadata.update_last_sync();
+
+        // Save metadata
+        self.metadata.save(&self.metadata_path)?;
+
+        Ok(report)
+    }
+
+    fn load_local_tasks(&self, tasks_file: &PathBuf) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+        if !tasks_file.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(tasks_file)?;
+        let mut tasks = Vec::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("- [ ]") || trimmed.starts_with("- [x]") {
+                let task_text = trimmed
+                    .strip_prefix("- [ ] ")
+                    .or_else(|| trimmed.strip_prefix("- [x] "))
+                    .unwrap_or(trimmed);
+
+                let mut task = Task::parse(task_text);
+                task.completed = trimmed.starts_with("- [x]");
+                tasks.push(task);
+            }
+        }
+
+        Ok(tasks)
+    }
+
+    fn detect_changes(&self, local_tasks: &[Task], todoist_tasks: &[TodoistTask]) -> Vec<SyncAction> {
+        let mut actions = Vec::new();
+
+        // Build sets for quick lookup
+        let local_ids: HashSet<_> = local_tasks.iter().map(|t| t.id.clone()).collect();
+        let todoist_ids: HashSet<_> = todoist_tasks
+            .iter()
+            .filter_map(|t| t.id.clone())
+            .collect();
+
+        // Map of todoist_id -> task (for future use)
+        let _todoist_map: HashMap<_, _> = todoist_tasks
+            .iter()
+            .filter_map(|t| t.id.as_ref().map(|id| (id.clone(), t)))
+            .collect();
+
+        // Check local tasks
+        for local_task in local_tasks {
+            if let Some(todoist_id) = self.metadata.get_todoist_id(&local_task.id) {
+                // Task is mapped
+                if todoist_ids.contains(todoist_id) {
+                    // Both exist - check for changes
+                    let local_hash = self.compute_task_hash(local_task);
+                    let stored_hash = self.metadata.get_hash(&local_task.id);
+
+                    if stored_hash.map(|h| h != local_hash).unwrap_or(true) {
+                        // Local changed, update Todoist (Todoist wins on conflict, but we don't detect that here)
+                        actions.push(SyncAction::UpdateTodoist {
+                            yarmtl_id: local_task.id.clone(),
+                            task: local_task.clone(),
+                        });
+                    }
+                } else {
+                    // Todoist task was deleted
+                    actions.push(SyncAction::DeleteFromYarmtl {
+                        yarmtl_id: local_task.id.clone(),
+                    });
+                }
+            } else {
+                // New local task
+                actions.push(SyncAction::CreateInTodoist(local_task.clone()));
+            }
+        }
+
+        // Check Todoist tasks
+        for todoist_task in todoist_tasks {
+            if let Some(todoist_id) = &todoist_task.id {
+                if let Some(yarmtl_id) = self.metadata.get_yarmtl_id(todoist_id) {
+                    // Already mapped, handled above
+                    if !local_ids.contains(&yarmtl_id) {
+                        // Local was deleted
+                        actions.push(SyncAction::DeleteFromTodoist {
+                            todoist_id: todoist_id.clone(),
+                        });
+                    }
+                } else {
+                    // Check if this is a new Todoist task or has yarmtl metadata
+                    if let Some(meta) = self.extract_yarmtl_metadata(todoist_task) {
+                        // Has yarmtl metadata, might be an update
+                        if local_ids.contains(&meta.id) {
+                            // Update local
+                            actions.push(SyncAction::UpdateYarmtl {
+                                todoist_id: todoist_id.clone(),
+                                task: todoist_task.clone(),
+                            });
+                        } else {
+                            // Create new local
+                            actions.push(SyncAction::CreateInYarmtl(todoist_task.clone()));
+                        }
+                    } else {
+                        // New Todoist task without metadata
+                        actions.push(SyncAction::CreateInYarmtl(todoist_task.clone()));
+                    }
+                }
+            }
+        }
+
+        actions
+    }
+
+    async fn apply_action(&mut self, action: SyncAction) -> Result<ActionType, Box<dyn std::error::Error>> {
+        match action {
+            SyncAction::CreateInTodoist(task) => {
+                let todoist_task = self.convert_yarmtl_to_todoist(&task);
+                let created = self.client.create_task(&todoist_task).await?;
+
+                if let Some(todoist_id) = created.id {
+                    let info = TaskSyncInfo {
+                        todoist_id,
+                        last_modified: Utc::now(),
+                        last_sync_hash: self.compute_task_hash(&task),
+                    };
+                    self.metadata.update_mapping(task.id, info);
+                }
+
+                Ok(ActionType::CreatedInTodoist)
+            }
+            SyncAction::CreateInYarmtl(todoist_task) => {
+                // This is handled by updating the local file
+                // We'll just update metadata here
+                let yarmtl_task = self.convert_todoist_to_yarmtl(&todoist_task);
+
+                if let Some(todoist_id) = todoist_task.id {
+                    let info = TaskSyncInfo {
+                        todoist_id,
+                        last_modified: Utc::now(),
+                        last_sync_hash: self.compute_task_hash(&yarmtl_task),
+                    };
+                    self.metadata.update_mapping(yarmtl_task.id, info);
+                }
+
+                Ok(ActionType::CreatedInYarmtl)
+            }
+            SyncAction::UpdateTodoist { yarmtl_id, task } => {
+                if let Some(todoist_id) = self.metadata.get_todoist_id(&yarmtl_id) {
+                    let todoist_task = self.convert_yarmtl_to_todoist(&task);
+                    self.client.update_task(todoist_id, &todoist_task).await?;
+
+                    let info = TaskSyncInfo {
+                        todoist_id: todoist_id.to_string(),
+                        last_modified: Utc::now(),
+                        last_sync_hash: self.compute_task_hash(&task),
+                    };
+                    self.metadata.update_mapping(yarmtl_id, info);
+                }
+
+                Ok(ActionType::UpdatedInTodoist)
+            }
+            SyncAction::UpdateYarmtl { todoist_id: _, task: _ } => {
+                // Mark as updated in yarmtl (actual file update happens elsewhere)
+                Ok(ActionType::UpdatedInYarmtl)
+            }
+            SyncAction::DeleteFromTodoist { todoist_id } => {
+                self.client.delete_task(&todoist_id).await?;
+                Ok(ActionType::DeletedFromTodoist)
+            }
+            SyncAction::DeleteFromYarmtl { yarmtl_id } => {
+                self.metadata.remove_mapping(&yarmtl_id);
+                Ok(ActionType::DeletedFromYarmtl)
+            }
+        }
+    }
+
+    fn convert_yarmtl_to_todoist(&self, task: &Task) -> TodoistTask {
+        let due = task.deadline.map(|d| TodoistDue {
+            date: d.format("%Y-%m-%d").to_string(),
+            datetime: None,
+            timezone: None,
+        });
+
+        let labels = if task.tags.is_empty() {
+            None
+        } else {
+            Some(task.tags.clone())
+        };
+
+        // Convert importance: yarmtl 1-5 (1=most) -> todoist 1-4 (4=most)
+        let priority = task.importance.map(|i| match i {
+            1 => 4,
+            2 => 3,
+            3 => 2,
+            _ => 1,
+        });
+
+        let metadata = YarmtlMetadata {
+            id: task.id.clone(),
+            reminder: task.reminder.map(|r| r.format("%Y-%m-%d").to_string()),
+            notes: task.notes.clone(),
+            importance: task.importance,
+        };
+
+        let description = Some(metadata.encode());
+
+        TodoistTask {
+            id: None, // Will be set by Todoist
+            content: task.text.clone(),
+            description,
+            due,
+            labels,
+            priority,
+            is_completed: Some(task.completed),
+            project_id: None,
+        }
+    }
+
+    fn convert_todoist_to_yarmtl(&self, todoist_task: &TodoistTask) -> Task {
+        let metadata = todoist_task
+            .description
+            .as_ref()
+            .and_then(|d| YarmtlMetadata::parse(d));
+
+        let id = metadata
+            .as_ref()
+            .map(|m| m.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()[..8].to_string());
+
+        let deadline = todoist_task
+            .due
+            .as_ref()
+            .and_then(|d| NaiveDate::parse_from_str(&d.date, "%Y-%m-%d").ok());
+
+        let tags = todoist_task.labels.clone().unwrap_or_default();
+
+        let reminder = metadata
+            .as_ref()
+            .and_then(|m| m.reminder.as_ref())
+            .and_then(|r| NaiveDate::parse_from_str(r, "%Y-%m-%d").ok());
+
+        let notes = metadata.as_ref().and_then(|m| m.notes.clone());
+
+        let importance = metadata.as_ref().and_then(|m| m.importance);
+
+        Task {
+            id,
+            text: todoist_task.content.clone(),
+            deadline,
+            tags,
+            reminder,
+            completed: todoist_task.is_completed.unwrap_or(false),
+            notes,
+            importance,
+        }
+    }
+
+    fn extract_yarmtl_metadata(&self, todoist_task: &TodoistTask) -> Option<YarmtlMetadata> {
+        todoist_task
+            .description
+            .as_ref()
+            .and_then(|d| YarmtlMetadata::parse(d))
+    }
+
+    fn compute_task_hash(&self, task: &Task) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        task.text.hash(&mut hasher);
+        task.deadline.hash(&mut hasher);
+        task.tags.iter().for_each(|t| t.hash(&mut hasher));
+        task.reminder.hash(&mut hasher);
+        task.completed.hash(&mut hasher);
+        if let Some(ref notes) = task.notes {
+            notes.hash(&mut hasher);
+        }
+        task.importance.hash(&mut hasher);
+
+        format!("{:x}", hasher.finish())
+    }
+}
+
+enum ActionType {
+    CreatedInTodoist,
+    CreatedInYarmtl,
+    UpdatedInTodoist,
+    UpdatedInYarmtl,
+    DeletedFromTodoist,
+    DeletedFromYarmtl,
+}

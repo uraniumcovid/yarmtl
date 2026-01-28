@@ -1,4 +1,4 @@
-use crate::{Task, git_commit_tasks_with_message};
+use crate::{Task, git_commit_tasks_with_message, is_todoist_sync_enabled, trigger_todoist_sync};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -131,16 +131,25 @@ impl App {
     pub fn save_tasks_with_message(&self, commit_message: Option<&str>) {
         let task_file = self.working_dir.join("tasks.md");
         let mut content = String::from("# tasks\n\n");
-        
+
         for task in &self.tasks {
             content.push_str(&format!("{}\n", task.to_markdown()));
         }
-        
+
         let _ = fs::write(&task_file, content);
-        
+
         // Auto-commit the task changes with custom message
         if let Err(e) = git_commit_tasks_with_message(commit_message) {
             eprintln!("Warning: Failed to commit tasks to git: {}", e);
+        }
+
+        // Trigger Todoist sync in background
+        if is_todoist_sync_enabled() {
+            tokio::spawn(async move {
+                if let Err(e) = trigger_todoist_sync().await {
+                    eprintln!("⚠ Todoist sync failed: {}", e);
+                }
+            });
         }
     }
 
