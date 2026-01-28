@@ -1,6 +1,6 @@
 # yarmtl - yet another rust markdown todo(ist) list
-yarmtl is a simple todoist app writting in rust, that stores your tasks in a simple markdown file.
-the program supports the todoist api for 2-way sync, and git-based sync too.
+yarmtl is a todo app writting in rust, that stores your tasks in a simple markdown file.
+the program supports the todoist api for 2-way sync, and git-based sync.
 
 ## installation
 
