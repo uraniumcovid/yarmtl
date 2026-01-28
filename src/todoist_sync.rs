@@ -100,7 +100,9 @@ impl TodoistSync {
         let actions = self.detect_changes(&self.local_tasks.clone(), &todoist_tasks);
 
         // Apply actions
-        for action in actions {
+        let total_actions = actions.len();
+        for (idx, action) in actions.into_iter().enumerate() {
+            eprint!("\r🔄 Syncing... {}/{} ", idx + 1, total_actions);
             match self.apply_action(action).await {
                 Ok(action_type) => {
                     match action_type {
@@ -113,9 +115,12 @@ impl TodoistSync {
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠ Sync action failed: {}", e);
+                    eprintln!("\r⚠ Sync action failed: {}", e);
                 }
             }
+        }
+        if total_actions > 0 {
+            eprintln!("\r✓ Completed {} sync actions", total_actions);
         }
 
         // Write back local tasks if modified
@@ -208,10 +213,22 @@ impl TodoistSync {
                 }
             } else {
                 // Task not in metadata - could be new, or old completed task
-                // Skip completed tasks without deadlines/reminders (likely old test tasks)
-                if local_task.completed && local_task.deadline.is_none() && local_task.reminder.is_none() {
-                    // Skip old completed tasks to avoid re-syncing test tasks
-                    continue;
+                // Skip completed tasks (don't sync old completed tasks to Todoist)
+                if local_task.completed {
+                    // Only sync completed tasks if they have a deadline in the future
+                    // or within the last 30 days
+                    let should_skip = if let Some(deadline) = local_task.deadline {
+                        let today = chrono::Local::now().date_naive();
+                        let thirty_days_ago = today - chrono::Duration::days(30);
+                        deadline < thirty_days_ago
+                    } else {
+                        // No deadline - skip all old completed tasks
+                        true
+                    };
+
+                    if should_skip {
+                        continue;
+                    }
                 }
 
                 // New local task - create in Todoist

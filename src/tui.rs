@@ -35,6 +35,7 @@ pub struct App {
     pub view_mode: ViewMode,
     pub tags_list_state: ListState,
     pub selected_tag: Option<String>,
+    pub sync_status: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -66,6 +67,7 @@ impl Default for App {
             view_mode: ViewMode::Tasks,
             tags_list_state: ListState::default(),
             selected_tag: None,
+            sync_status: None,
         }
     }
 }
@@ -372,6 +374,32 @@ impl App {
         }
     }
 
+    pub fn manual_sync(&mut self) {
+        if !is_todoist_sync_enabled() {
+            self.sync_status = Some("⚠ Todoist sync not enabled".to_string());
+            return;
+        }
+
+        self.sync_status = Some("🔄 Syncing...".to_string());
+
+        // Run sync in blocking manner
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                trigger_todoist_sync().await
+            })
+        });
+
+        match result {
+            Ok(_) => {
+                self.load_tasks(); // Reload to show synced tasks
+                self.sync_status = Some("✓ Synced with Todoist".to_string());
+            }
+            Err(e) => {
+                self.sync_status = Some(format!("⚠ Sync failed: {}", e));
+            }
+        }
+    }
+
     pub fn next_tag(&mut self) {
         let tags = self.get_all_tags();
         let total_items = tags.len() + 1; // +1 for "All Tasks" option
@@ -511,6 +539,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             KeyCode::Char('t') => {
                                 app.toggle_view_mode();
+                            }
+                            KeyCode::Char('s') => {
+                                // Trigger manual Todoist sync
+                                app.manual_sync();
                             }
                             KeyCode::Esc => {
                                 app.selected_tag = None;
@@ -821,7 +853,7 @@ fn draw_status_line(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let visible_count = app.get_visible_tasks().len();
     let total_count = app.tasks.len();
     let completed_count = app.tasks.iter().filter(|t| t.completed).count();
-    
+
     let mode_text = match app.input_mode {
         InputMode::Normal => "NORMAL",
         InputMode::Editing => "EDITING",
@@ -838,14 +870,20 @@ fn draw_status_line(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         ViewMode::TagsMenu => "Tags menu".to_string(),
     };
 
+    let sync_info = if let Some(ref sync_status) = app.sync_status {
+        format!(" | {}", sync_status)
+    } else {
+        String::new()
+    };
+
     let status_text = format!(
-        "{} | {} | Tasks: {} active, {} completed, {} total | t:tags h:help q:quit",
-        mode_text, view_info, visible_count, completed_count, total_count
+        "{} | {} | Tasks: {} active, {} completed, {} total{} | s:sync t:tags h:help q:quit",
+        mode_text, view_info, visible_count, completed_count, total_count, sync_info
     );
 
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(Color::White).bg(Color::Black));
-    
+
     f.render_widget(status, area);
 }
 
@@ -972,6 +1010,7 @@ fn draw_help_popup(f: &mut Frame) {
         Line::from("  c      - Toggle show completed tasks"),
         Line::from("  r      - Reload tasks from file"),
         Line::from("  n      - View task notes"),
+        Line::from("  s      - Sync with Todoist"),
         Line::from("  t      - Toggle tags menu"),
         Line::from("  Esc    - Clear tag filter"),
         Line::from(""),

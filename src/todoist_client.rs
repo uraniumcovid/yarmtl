@@ -92,7 +92,9 @@ impl TodoistClient {
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TodoistTask>, TodoistError> {
-        self.make_request(reqwest::Method::GET, "/tasks", None)
+        // Only fetch active (non-completed) tasks to avoid syncing thousands of old tasks
+        let url = "/tasks";
+        self.make_request(reqwest::Method::GET, url, None)
             .await
     }
 

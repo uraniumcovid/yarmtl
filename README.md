@@ -1,58 +1,65 @@
-# YARMTL - Yet Another Rust Markdown Todo List
+# yarmtl - yet another rust markdown todo(ist) list
+yarmtl is a simple todoist app writting in rust, that stores your tasks in a simple markdown file.
+the program supports the todoist api for 2-way sync, and git-based sync too.
 
-A terminal-based todo list manager with git synchronization and GitHub sync support.
+## installation
 
-## Features
-
-- 📝 Markdown-based task storage
-- 🔄 Automatic git versioning
-- 📅 Deadline and reminder support
-- 🏷️ Tag-based organization
-- 📧 Email reminders
-- 🖥️ Terminal UI (TUI)
-- ☁️ GitHub sync support
-
-## Installation
-
-### Using Nix (Recommended)
+### using nix:
 
 ```bash
-# Run the installation script
+# run the installation script
 ./install.sh
 
 # Or install manually
 nix --extra-experimental-features nix-command --extra-experimental-features flakes profile install .
 ```
 
-### From Source
+### from source
 
 ```bash
 cargo build --release
 cp target/release/yarmtl ~/.local/bin/
 ```
 
-## Usage
-
-### Basic Commands
+## basic commands
 
 ```bash
-# Launch interactive TUI
+# open the tui:
 yarmtl
 
-# Add a task
+# add task directly:
 yarmtl "Fix the bug in module X #urgent !2024-12-20"
 
-# List all tasks
+# print all tasks (excluding completed):
 yarmtl --list
 
-# List including completed tasks
+# print all tasks (including completed):
 yarmtl --list --done
+
+# give yarmtl your todoist api-key to use 2-way sync with todoist:
+yarmtl --setup-todoist
 ```
 
-### Task Syntax
+## tui
 
+### tui task management
+- a/i: add new task ("add"/"insert", not ai bs)
+- d/Del: delete selected task
+- c: toggle show completed tasks
+- r: reload tasks
+- n: view task notes
+- s: sync with todoist (requires api key from "yarmtl --setup-todoist" command above)
+- t: toggle tags menu
+- esc: clear tag filter
+
+### tui navigation
+- j/down: next task
+- k/up: prev. task
+- enter/space: toggle task completion
+
+## task notation
 ```
-yarmtl "Task description !deadline #tag @reminder //notes $importance"
+yarmtl "task description !deadline #tag @reminder //notes $importance"
 ```
 
 - `!2024-12-31` or `!tomorrow` - Set deadline
@@ -61,32 +68,26 @@ yarmtl "Task description !deadline #tag @reminder //notes $importance"
 - `//important notes` - Add notes
 - `$5` - Set importance (1-5)
 
-### GitHub Sync Setup
+## github and todoist sync (warning!)
+the system will attempt to store the todoist api key in the system key ring, but it will fallback to the local file share storage, if it can't acess the key ring.
+do not git-version that backup api location, since you would risk exposing your api key to a public repo, if you for some reason used a public repo for tasks.md storage.
+do not do this. i am not responsible for any resulting problems from that or general usage of the software.
 
-Your tasks are automatically stored in `~/.local/share/yarmtl/yarmtl-tasks/tasks.md` with git versioning.
+your tasks are automatically stored in `~/.local/share/yarmtl/yarmtl-tasks/tasks.md` with git versioning.
 
-To sync with GitHub:
+### todoist sync
+to sync with todoist, you will need to use the "yarmtl --setup-todoist" command to supply an api key.
+sync will be preformed by pressing "s" in the tui, as mentioned above.
+
+### github sync
+to sync with github:
 
 ```bash
 cd ~/.local/share/yarmtl/yarmtl-tasks
 git remote add origin https://github.com/yourusername/yarmtl-tasks.git
 git push -u origin main
 ```
-
-### Email Reminders
-
-```bash
-# Setup email configuration
-yarmtl --setup-email
-
-# Send reminders manually
-yarmtl --email
-
-# Run as daemon (sends at 5 AM daily)
-yarmtl --daemon
-```
-
-## Development
+## development
 
 ```bash
 # Enter development shell
