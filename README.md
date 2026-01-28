@@ -70,8 +70,10 @@ yarmtl "task description !deadline #tag @reminder //notes $importance"
 
 ## github and todoist sync (warning!)
 the system will attempt to store the todoist api key in the system key ring, but it will fallback to the local file share storage, if it can't acess the key ring.
-do not git-version that backup api location, since you would risk exposing your api key to a public repo, if you for some reason used a public repo for tasks.md storage.
-do not do this. i am not responsible for any resulting problems from that or general usage of the software.
+do not git-version that backup api location, since you would risk exposing your api key to a public repo, if you for some reason used a public repo for storing the api key.
+nb: this is not the same folder as the task storage itself. that can safely be git-versioned.
+
+i am not responsible for any resulting problems from that or general usage of the software.
 
 your tasks are automatically stored in `~/.local/share/yarmtl/yarmtl-tasks/tasks.md` with git versioning.
 
