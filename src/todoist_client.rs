@@ -1,4 +1,4 @@
-use crate::todoist_types::{TodoistTask, TodoistLabel};
+use crate::todoist_types::{TodoistTask, TodoistLabel, TodoistProject};
 use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
@@ -150,6 +150,19 @@ impl TodoistClient {
             "name": name
         });
         self.make_request(reqwest::Method::POST, "/labels", Some(body))
+            .await
+    }
+
+    pub async fn list_projects(&self) -> Result<Vec<TodoistProject>, TodoistError> {
+        self.make_request(reqwest::Method::GET, "/projects", None)
+            .await
+    }
+
+    pub async fn create_project(&self, name: &str) -> Result<TodoistProject, TodoistError> {
+        let body = json!({
+            "name": name
+        });
+        self.make_request(reqwest::Method::POST, "/projects", Some(body))
             .await
     }
 }

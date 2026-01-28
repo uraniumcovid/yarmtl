@@ -58,6 +58,9 @@ pub struct TodoistSync {
     client: TodoistClient,
     metadata: SyncMetadata,
     metadata_path: PathBuf,
+    local_tasks: Vec<Task>,
+    tasks_modified: bool,
+    projects: HashMap<String, String>, // project_name -> project_id
 }
 
 impl TodoistSync {
@@ -70,20 +73,31 @@ impl TodoistSync {
             client,
             metadata,
             metadata_path,
+            local_tasks: Vec::new(),
+            tasks_modified: false,
+            projects: HashMap::new(),
         })
     }
 
     pub async fn sync(&mut self, tasks_file: &PathBuf) -> Result<SyncReport, Box<dyn std::error::Error>> {
         let mut report = SyncReport::new();
 
+        // Fetch all projects from Todoist
+        let projects = self.client.list_projects().await?;
+        self.projects = projects
+            .into_iter()
+            .map(|p| (p.name.clone(), p.id.clone()))
+            .collect();
+
         // Fetch all tasks from Todoist
         let todoist_tasks = self.client.list_tasks().await?;
 
         // Load local tasks
-        let local_tasks = self.load_local_tasks(tasks_file)?;
+        self.local_tasks = self.load_local_tasks(tasks_file)?;
+        self.tasks_modified = false;
 
         // Detect changes
-        let actions = self.detect_changes(&local_tasks, &todoist_tasks);
+        let actions = self.detect_changes(&self.local_tasks.clone(), &todoist_tasks);
 
         // Apply actions
         for action in actions {
@@ -104,6 +118,11 @@ impl TodoistSync {
             }
         }
 
+        // Write back local tasks if modified
+        if self.tasks_modified {
+            self.save_local_tasks(tasks_file)?;
+        }
+
         // Update last sync timestamp
         self.metadata.update_last_sync();
 
@@ -111,6 +130,17 @@ impl TodoistSync {
         self.metadata.save(&self.metadata_path)?;
 
         Ok(report)
+    }
+
+    fn save_local_tasks(&self, tasks_file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        let mut content = String::from("# tasks\n\n");
+
+        for task in &self.local_tasks {
+            content.push_str(&format!("{}\n", task.to_markdown()));
+        }
+
+        fs::write(tasks_file, content)?;
+        Ok(())
     }
 
     fn load_local_tasks(&self, tasks_file: &PathBuf) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
@@ -221,6 +251,11 @@ impl TodoistSync {
     async fn apply_action(&mut self, action: SyncAction) -> Result<ActionType, Box<dyn std::error::Error>> {
         match action {
             SyncAction::CreateInTodoist(task) => {
+                // Ensure project exists if task has tags
+                if !task.tags.is_empty() {
+                    self.get_or_create_project(&task.tags[0]).await;
+                }
+
                 let todoist_task = self.convert_yarmtl_to_todoist(&task);
                 let created = self.client.create_task(&todoist_task).await?;
 
@@ -241,8 +276,6 @@ impl TodoistSync {
                 Ok(ActionType::CreatedInTodoist)
             }
             SyncAction::CreateInYarmtl(todoist_task) => {
-                // This is handled by updating the local file
-                // We'll just update metadata here
                 let yarmtl_task = self.convert_todoist_to_yarmtl(&todoist_task);
 
                 if let Some(todoist_id) = todoist_task.id {
@@ -251,25 +284,34 @@ impl TodoistSync {
                         last_modified: Utc::now(),
                         last_sync_hash: self.compute_task_hash(&yarmtl_task),
                     };
-                    self.metadata.update_mapping(yarmtl_task.id, info);
+                    self.metadata.update_mapping(yarmtl_task.id.clone(), info);
                 }
+
+                // Add to local tasks
+                self.local_tasks.push(yarmtl_task);
+                self.tasks_modified = true;
 
                 Ok(ActionType::CreatedInYarmtl)
             }
             SyncAction::UpdateTodoist { yarmtl_id, task } => {
-                if let Some(todoist_id) = self.metadata.get_todoist_id(&yarmtl_id) {
+                if let Some(todoist_id) = self.metadata.get_todoist_id(&yarmtl_id).map(|s| s.to_string()) {
+                    // Ensure project exists if task has tags
+                    if !task.tags.is_empty() {
+                        self.get_or_create_project(&task.tags[0]).await;
+                    }
+
                     let todoist_task = self.convert_yarmtl_to_todoist(&task);
-                    self.client.update_task(todoist_id, &todoist_task).await?;
+                    self.client.update_task(&todoist_id, &todoist_task).await?;
 
                     // Handle completion status changes
                     if task.completed {
-                        let _ = self.client.close_task(todoist_id).await;
+                        let _ = self.client.close_task(&todoist_id).await;
                     } else {
-                        let _ = self.client.reopen_task(todoist_id).await;
+                        let _ = self.client.reopen_task(&todoist_id).await;
                     }
 
                     let info = TaskSyncInfo {
-                        todoist_id: todoist_id.to_string(),
+                        todoist_id: todoist_id.clone(),
                         last_modified: Utc::now(),
                         last_sync_hash: self.compute_task_hash(&task),
                     };
@@ -278,8 +320,23 @@ impl TodoistSync {
 
                 Ok(ActionType::UpdatedInTodoist)
             }
-            SyncAction::UpdateYarmtl { todoist_id: _, task: _ } => {
-                // Mark as updated in yarmtl (actual file update happens elsewhere)
+            SyncAction::UpdateYarmtl { todoist_id, task } => {
+                let yarmtl_task = self.convert_todoist_to_yarmtl(&task);
+
+                // Find and update the local task
+                if let Some(local_task) = self.local_tasks.iter_mut().find(|t| t.id == yarmtl_task.id) {
+                    *local_task = yarmtl_task.clone();
+                    self.tasks_modified = true;
+                }
+
+                // Update metadata
+                let info = TaskSyncInfo {
+                    todoist_id,
+                    last_modified: Utc::now(),
+                    last_sync_hash: self.compute_task_hash(&yarmtl_task),
+                };
+                self.metadata.update_mapping(yarmtl_task.id, info);
+
                 Ok(ActionType::UpdatedInYarmtl)
             }
             SyncAction::DeleteFromTodoist { todoist_id } => {
@@ -287,8 +344,31 @@ impl TodoistSync {
                 Ok(ActionType::DeletedFromTodoist)
             }
             SyncAction::DeleteFromYarmtl { yarmtl_id } => {
+                // Remove from local tasks
+                self.local_tasks.retain(|t| t.id != yarmtl_id);
+                self.tasks_modified = true;
+
                 self.metadata.remove_mapping(&yarmtl_id);
                 Ok(ActionType::DeletedFromYarmtl)
+            }
+        }
+    }
+
+    async fn get_or_create_project(&mut self, project_name: &str) -> Option<String> {
+        // Check if project already exists in cache
+        if let Some(project_id) = self.projects.get(project_name) {
+            return Some(project_id.clone());
+        }
+
+        // Create new project
+        match self.client.create_project(project_name).await {
+            Ok(project) => {
+                self.projects.insert(project.name.clone(), project.id.clone());
+                Some(project.id)
+            }
+            Err(e) => {
+                eprintln!("⚠ Failed to create project '{}': {}", project_name, e);
+                None
             }
         }
     }
@@ -300,10 +380,21 @@ impl TodoistSync {
             timezone: None,
         });
 
-        let labels = if task.tags.is_empty() {
-            None
+        // First tag becomes project, rest become labels
+        let (project_id, labels) = if task.tags.is_empty() {
+            (None, None)
         } else {
-            Some(task.tags.clone())
+            let project_name = &task.tags[0];
+            let project_id = self.projects.get(project_name).cloned();
+
+            // Rest of tags become labels (if any)
+            let labels = if task.tags.len() > 1 {
+                Some(task.tags[1..].to_vec())
+            } else {
+                None
+            };
+
+            (project_id, labels)
         };
 
         // Convert importance: yarmtl 1-5 (1=most) -> todoist 1-4 (4=most)
@@ -332,7 +423,7 @@ impl TodoistSync {
             labels,
             priority,
             is_completed: None, // Don't set here, use close_task/reopen_task instead
-            project_id: None,
+            project_id,
         }
     }
 
@@ -359,7 +450,21 @@ impl TodoistSync {
                     .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
             });
 
-        let tags = todoist_task.labels.clone().unwrap_or_default();
+        // Tags: project comes first, then labels
+        let mut tags = Vec::new();
+
+        // Add project name as first tag
+        if let Some(project_id) = &todoist_task.project_id {
+            // Find project name from project_id
+            if let Some((name, _)) = self.projects.iter().find(|(_, id)| id == &project_id) {
+                tags.push(name.clone());
+            }
+        }
+
+        // Add labels as additional tags
+        if let Some(labels) = &todoist_task.labels {
+            tags.extend(labels.clone());
+        }
 
         let reminder = metadata
             .as_ref()

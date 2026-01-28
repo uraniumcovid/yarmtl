@@ -36,6 +36,14 @@ pub struct TodoistLabel {
     pub color: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoistProject {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct YarmtlMetadata {
     pub id: String,
